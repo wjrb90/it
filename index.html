@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title></title>
+	<meta charset="utf-8">
+	<meta name="generator" content="Three.js Editor">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link rel="stylesheet" href="css/app.css">
+
+	<script type="importmap">
+	{
+		"imports": {
+			"three": "./js/three.module.js"
+		}
+	}
+	</script>
+
+	<script type="module">
+		import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js';
+		window.ThreeGLTFLoader = GLTFLoader;
+	</script>
+</head>
+
+<body ontouchstart="">
+
+	<script crossorigin="anonymous" src="./js/xr8/xr.js" data-preload-chunks="slam"></script>
+
+	<div class="log" id="log">asdasdsa</div>
+
+	<div id="overlay">
+		<button id="start-button">Iniciar</button>
+		<div id="progress-container">
+			<div id="progress-bar-track">
+				<div id="progress-bar-fill"></div>
+			</div>
+			<div id="progress-label">Cargando... 0%</div>
+		</div>
+	</div>
+
+	<script type="module">
+
+		import * as THREE from './js/three.module.js';
+		import { APP } from './js/app.js';
+		import { XR8Controller } from './js/xr8/xr8_controller.js';
+
+		window.THREE = THREE; // Used by APP Scripts.
+
+		const log = document.getElementById('log');
+		const overlay = document.getElementById('overlay');
+		const startButton = document.getElementById('start-button');
+		const progressContainer = document.getElementById('progress-container');
+		const progressFill = document.getElementById('progress-bar-fill');
+		const progressLabel = document.getElementById('progress-label');
+
+		let player = null;
+		let xr8Controller = null;
+		let loaded = false;
+		let loadPromise = null;
+
+		function setProgress(percent, text) {
+			progressFill.style.width = `${percent}%`;
+			progressLabel.textContent = `${text} ${percent}%`;
+		}
+
+		async function loadEverything() {
+
+			if (loadPromise) return loadPromise;
+
+			loadPromise = (async () => {
+
+				setProgress(0, 'Cargando escena...');
+
+				// Descarga IT.json con progreso real (0% - 25%)
+				const text = await new Promise((resolve, reject) => {
+					const loader = new THREE.FileLoader();
+					loader.load(
+						'app.json',
+						(t) => resolve(t),
+						(e) => {
+							if (e.lengthComputable) {
+								const p = Math.round((e.loaded / e.total) * 25);
+								setProgress(p, 'Cargando escena...');
+							}
+						},
+						(err) => reject(new Error(err.statusText || 'No se pudo descargar el json'))
+					);
+				});
+
+				player = new APP.Player({ alpha: true });
+				await player.load(JSON.parse(text));
+				player.setSize(window.innerWidth, window.innerHeight);
+				player.play();
+				setProgress(55, 'Escena lista...');
+
+				document.body.appendChild(player.dom);
+
+				window.addEventListener('resize', function () {
+					player.setSize(window.innerWidth, window.innerHeight);
+				});
+
+				// Initialize XR8Controller using the current player so it can reuse its loaded scene.
+				xr8Controller = new XR8Controller(player.canvas, player, false);
+				window.player = player;
+				window.xr8Controller = xr8Controller;
+
+				setProgress(65, 'Inicializando AR...');
+				log.textContent = 'initializing...';
+
+				try {
+					const targets = await xr8Controller.setImageTargetsFromPlayer();
+					setProgress(85, 'Registrando targets...');
+					log.textContent = `Targets: ${targets.length} registrado(s)\n`;
+				} catch (e) {
+					console.error('Error al registrar targets:', e.message);
+					log.textContent = `Error: ${e.message}\n`;
+					setProgress(85, 'Error al registrar targets');
+					throw e;
+				}
+
+				setProgress(95, 'Preparando cámara...');
+				await xr8Controller.waitForReady();
+
+				setProgress(100, 'Listo');
+				loaded = true;
+
+				console.log(window.player);
+				console.log(window.xr8Controller);
+
+			})().catch((e) => {
+				loaded = false;
+				loadPromise = null; // permite reintentar al pulsar el botón
+				throw e;
+			});
+
+			return loadPromise;
+		}
+
+		// Al darle al botón start se muestra el progreso de dónde va la carga.
+		startButton.addEventListener('click', async () => {
+
+			progressContainer.style.display = 'flex';
+
+			try {
+				await loadEverything();
+				if (!loaded) return;
+
+				// La cámara se inicia aquí, dentro del gesto del usuario.
+				await xr8Controller.start();
+				overlay.classList.add('hidden');
+				setTimeout(() => overlay.remove(), 400);
+			} catch (e) {
+				console.error('Error durante la carga:', e.message);
+				startButton.textContent = 'Reintentar';
+			}
+
+		});
+
+		// Todo se carga automáticamente al abrir la página.
+		loadEverything().catch((e) => {
+			console.error('Error durante la carga automática:', e.message);
+			progressContainer.style.display = 'flex';
+			setProgress(0, 'Error al cargar');
+			startButton.textContent = 'Reintentar';
+		});
+
+	</script>
+</body>
+
+</html>
